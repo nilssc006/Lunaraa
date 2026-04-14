@@ -1,0 +1,19 @@
+import SwiftUI
+
+@main
+struct LunaraApp: App {
+    @StateObject private var store = LunaraStore()
+
+    var body: some Scene {
+        WindowGroup {
+            LunaraMainTabView()
+                .environmentObject(store)
+                .task {
+                    await store.subscriptionService.loadProducts()
+                    if store.notificationsEnabled {
+                        await store.enableNotifications()
+                    }
+                }
+        }
+    }
+}
