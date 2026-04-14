@@ -1,0 +1,572 @@
+import Foundation
+
+// MARK: - Cycle
+
+enum CyclePhase: String, Codable, CaseIterable, Identifiable {
+    case menstruation
+    case follicular
+    case ovulation
+    case luteal
+    case unknown
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .menstruation: return "Menstruation"
+        case .follicular: return "Follikelphase"
+        case .ovulation: return "Ovulation"
+        case .luteal: return "Lutealphase"
+        case .unknown: return "Unbekannt"
+        }
+    }
+
+    var emoji: String {
+        switch self {
+        case .menstruation: return "🌙"
+        case .follicular: return "🌱"
+        case .ovulation: return "🔥"
+        case .luteal: return "💜"
+        case .unknown: return "✨"
+        }
+    }
+
+    var trainingHint: String {
+        switch self {
+        case .menstruation:
+            return "Technik, moderate Lasten, sauberes Warm-up."
+        case .follicular:
+            return "Gute Phase für Progression und schwerere Sätze."
+        case .ovulation:
+            return "Hohe Leistungsfähigkeit möglich, sauber ausführen."
+        case .luteal:
+            return "Volumen leicht anpassen, Regeneration beachten."
+        case .unknown:
+            return "Starte konservativ und lerne aus Feedback."
+        }
+    }
+
+    var nutritionHint: String {
+        switch self {
+        case .menstruation:
+            return "Eisen und Flüssigkeit priorisieren."
+        case .follicular:
+            return "Protein und Energie für Aufbau nutzen."
+        case .ovulation:
+            return "Leistung unterstützen, genug Carbs einplanen."
+        case .luteal:
+            return "Regelmäßig essen, Magnesium und komplexe Carbs beachten."
+        case .unknown:
+            return "Ausgewogen essen und auf dein Energielevel achten."
+        }
+    }
+
+    var baseMultiplier: Double {
+        switch self {
+        case .menstruation: return 0.90
+        case .follicular: return 1.03
+        case .ovulation: return 1.07
+        case .luteal: return 0.95
+        case .unknown: return 1.00
+        }
+    }
+}
+
+enum CycleSource: String, Codable, CaseIterable {
+    case none
+    case healthKit
+    case manual
+}
+
+enum CycleCorrection: String, Codable, CaseIterable {
+    case notStarted
+    case startedEarlier
+    case startedLater
+    case confirmed
+}
+
+struct CycleState: Codable, Identifiable {
+    var id: String = UUID().uuidString
+    var source: CycleSource = .none
+    var lastPeriodStart: Date? = nil
+    var cycleLengthDays: Int = 28
+    var periodLengthDays: Int = 5
+    var confidence: Double = 0.35
+    var notes: String = ""
+
+    func currentPhase(on date: Date = Date()) -> CyclePhase {
+        guard let lastPeriodStart else { return .unknown }
+
+        let daysSince = Calendar.current.dateComponents([.day], from: lastPeriodStart, to: date).day ?? 0
+        let dayInCycle = (daysSince % max(cycleLengthDays, 21)) + 1
+
+        if dayInCycle <= periodLengthDays {
+            return .menstruation
+        } else if dayInCycle <= 13 {
+            return .follicular
+        } else if dayInCycle <= 15 {
+            return .ovulation
+        } else {
+            return .luteal
+        }
+    }
+}
+
+struct CycleLearningProfile: Codable {
+    var averageCycleLength: Int = 28
+    var averagePeriodLength: Int = 5
+    var lastConfirmedPeriodStart: Date? = nil
+    var confidenceScore: Double = 0.35
+}
+
+// MARK: - Training feedback / learning
+
+enum TrainingFeedback: String, Codable, CaseIterable {
+    case tooEasy
+    case perfect
+    case tooHard
+}
+
+// MARK: - Exercise library
+
+enum ExerciseCategory: String, Codable, CaseIterable, Identifiable {
+    case compound
+    case isolation
+    case cardio
+    case mobility
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .compound: return "Grundübung"
+        case .isolation: return "Isolation"
+        case .cardio: return "Cardio"
+        case .mobility: return "Mobility"
+        }
+    }
+}
+
+enum MuscleGroup: String, Codable, CaseIterable, Identifiable {
+    case chest
+    case back
+    case shoulders
+    case biceps
+    case triceps
+    case quadriceps
+    case hamstrings
+    case glutes
+    case calves
+    case core
+    case fullBody
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .chest: return "Brust"
+        case .back: return "Rücken"
+        case .shoulders: return "Schultern"
+        case .biceps: return "Bizeps"
+        case .triceps: return "Trizeps"
+        case .quadriceps: return "Quadrizeps"
+        case .hamstrings: return "Hamstrings"
+        case .glutes: return "Glutes"
+        case .calves: return "Waden"
+        case .core: return "Core"
+        case .fullBody: return "Ganzkörper"
+        }
+    }
+}
+
+enum EquipmentType: String, Codable, CaseIterable, Identifiable {
+    case barbell
+    case dumbbell
+    case machine
+    case cable
+    case bodyweight
+    case smith
+    case band
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .barbell: return "Langhantel"
+        case .dumbbell: return "Kurzhantel"
+        case .machine: return "Maschine"
+        case .cable: return "Kabel"
+        case .bodyweight: return "Eigengewicht"
+        case .smith: return "Smith Machine"
+        case .band: return "Band"
+        }
+    }
+}
+
+enum MovementPattern: String, Codable, CaseIterable, Identifiable {
+    case push
+    case pull
+    case squat
+    case hinge
+    case carry
+    case rotation
+    case cardio
+    case mobility
+
+    var id: String { rawValue }
+}
+
+enum DifficultyLevel: String, Codable, CaseIterable, Identifiable {
+    case beginner
+    case intermediate
+    case advanced
+
+    var id: String { rawValue }
+}
+
+struct Exercise: Codable, Identifiable, Hashable {
+    var id: String
+    var name: String
+    var icon: String
+    var category: ExerciseCategory
+    var primaryMuscle: MuscleGroup
+    var secondaryMuscles: [MuscleGroup]
+    var equipment: EquipmentType
+    var movementPattern: MovementPattern
+    var difficulty: DifficultyLevel
+    var comparableExerciseIDs: [String]
+    var isCustom: Bool
+}
+
+enum Weekday: String, Codable, CaseIterable, Identifiable {
+    case monday
+    case tuesday
+    case wednesday
+    case thursday
+    case friday
+    case saturday
+    case sunday
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .monday: return "Mo"
+        case .tuesday: return "Di"
+        case .wednesday: return "Mi"
+        case .thursday: return "Do"
+        case .friday: return "Fr"
+        case .saturday: return "Sa"
+        case .sunday: return "So"
+        }
+    }
+
+    static func today(calendar: Calendar = .current) -> Weekday {
+        let weekday = calendar.component(.weekday, from: Date())
+        switch weekday {
+        case 1: return .sunday
+        case 2: return .monday
+        case 3: return .tuesday
+        case 4: return .wednesday
+        case 5: return .thursday
+        case 6: return .friday
+        case 7: return .saturday
+        default: return .monday
+        }
+    }
+}
+
+// MARK: - Actual training logs
+
+struct ExerciseSet: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString
+    var weight: Double
+    var reps: Int
+    var rir: Int
+    var restSeconds: Int
+    var completedAt: Date = Date()
+}
+
+struct ExerciseLog: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString
+    var exerciseID: String
+    var exerciseName: String
+    var icon: String
+
+    var targetSets: Int
+    var targetReps: Int
+    var targetRIR: Int
+    var restSeconds: Int
+
+    var sets: [ExerciseSet] = []
+    var notes: String = ""
+
+    var bestWeight: Double {
+        sets.map { $0.weight }.max() ?? 0
+    }
+
+    var totalVolume: Double {
+        sets.reduce(0) { $0 + ($1.weight * Double($1.reps)) }
+    }
+}
+
+struct TrainingSession: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString
+    var date: Date = Date()
+    var title: String
+    var templateID: String?
+    var cyclePhase: CyclePhase
+    var durationMinutes: Int
+    var exerciseLogs: [ExerciseLog]
+    var isSpontaneous: Bool = false
+
+    var totalSets: Int {
+        exerciseLogs.reduce(0) { $0 + $1.sets.count }
+    }
+
+    var totalVolume: Double {
+        exerciseLogs.reduce(0) { $0 + $1.totalVolume }
+    }
+}
+
+// MARK: - Templates
+
+struct TemplateExercise: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString
+    var exerciseID: String
+    var exerciseName: String
+    var icon: String
+
+    var targetSets: Int
+    var targetReps: Int
+    var targetRIR: Int
+    var restSeconds: Int
+}
+
+struct TrainingTemplate: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString
+    var name: String
+    var emoji: String
+    var weekdayBindings: [Weekday]
+    var plannedExercises: [TemplateExercise]
+    var defaultRestSeconds: Int = 90
+    var isCustom: Bool = false
+
+    var isActiveOnToday: Bool {
+        weekdayBindings.contains(Weekday.today())
+    }
+}
+
+// MARK: - Goals, feed, profile, subscription
+
+struct Goal: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString
+    var title: String
+    var targetSessionsPerMonth: Int
+    var active: Bool = true
+}
+
+struct FeedPost: Codable, Identifiable, Hashable {
+    var id: String = UUID().uuidString
+    var date: Date = Date()
+    var authorName: String
+    var authorEmoji: String
+    var title: String
+    var body: String
+    var isFriendActivity: Bool = false
+}
+
+struct UserProfile: Codable, Hashable {
+    var displayName: String = "Athletin"
+    var bio: String = "Gym, Zyklus und smarter Fortschritt 💜"
+    var avatarData: Data? = nil
+}
+
+enum SubscriptionStatus: String, Codable {
+    case free
+    case trial
+    case premium
+}
+
+struct SubscriptionState: Codable, Hashable {
+    var status: SubscriptionStatus = .free
+    var referralCode: String = String(UUID().uuidString.prefix(6)).uppercased()
+    var trialEndsAt: Date? = nil
+    var discountPercent: Int = 0
+    var inviteRedemptions: Int = 0
+}
+
+struct ProgressionProfile: Codable, Hashable {
+    var baseProgressionRate: Double = 0.03
+    var adaptationFactor: Double = 1.0
+    var cycleSensitivity: Double = 1.0
+    var confidence: Double = 0.5
+    var lastSuggestedWeight: Double = 0
+    var lastSuggestedReps: Int = 0
+}
+
+struct RecommendationResult: Codable, Hashable {
+    var weight: Double
+    var reps: Int
+    var note: String
+    var warning: String
+    var phase: CyclePhase
+    var confidence: Double
+}
+
+struct InviteReward: Codable, Hashable {
+    var code: String
+    var freeTrialDays: Int
+    var discountPercent: Int
+    var usedCount: Int
+}
+
+struct AppSnapshot: Codable {
+    var profile: UserProfile
+    var cycleState: CycleState
+    var cycleLearning: CycleLearningProfile
+    var subscription: SubscriptionState
+    var goals: [Goal]
+    var exerciseLibrary: [Exercise]
+    var templates: [TrainingTemplate]
+    var sessions: [TrainingSession]
+    var feedPosts: [FeedPost]
+    var progressionProfiles: [String: ProgressionProfile]
+    var inviteReward: InviteReward
+}
+
+// MARK: - Exercise seed
+
+enum ExerciseSeed {
+    static func defaultLibrary() -> [Exercise] {
+        func make(
+            _ id: String,
+            _ name: String,
+            _ icon: String,
+            _ category: ExerciseCategory,
+            _ primary: MuscleGroup,
+            _ secondary: [MuscleGroup] = [],
+            _ equipment: EquipmentType,
+            _ movement: MovementPattern,
+            _ difficulty: DifficultyLevel = .intermediate,
+            comparable: [String] = [],
+            custom: Bool = false
+        ) -> Exercise {
+            Exercise(
+                id: id,
+                name: name,
+                icon: icon,
+                category: category,
+                primaryMuscle: primary,
+                secondaryMuscles: secondary,
+                equipment: equipment,
+                movementPattern: movement,
+                difficulty: difficulty,
+                comparableExerciseIDs: comparable,
+                isCustom: custom
+            )
+        }
+
+        return [
+            // Chest
+            make("bench_barbell", "Bankdrücken", "🏋️‍♀️", .compound, .chest, [.triceps, .shoulders], .barbell, .push, comparable: ["bench_dumbbell", "bench_smith"]),
+            make("bench_dumbbell", "Bankdrücken Kurzhantel", "🏋️‍♀️", .compound, .chest, [.triceps, .shoulders], .dumbbell, .push, comparable: ["bench_barbell", "bench_smith"]),
+            make("bench_smith", "Bankdrücken Smith", "🏋️‍♀️", .compound, .chest, [.triceps, .shoulders], .smith, .push, comparable: ["bench_barbell", "bench_dumbbell"]),
+            make("incline_bb", "Schrägbankdrücken", "📐", .compound, .chest, [.triceps, .shoulders], .barbell, .push, comparable: ["incline_db"]),
+            make("incline_db", "Schrägbankdrücken KH", "📐", .compound, .chest, [.triceps, .shoulders], .dumbbell, .push, comparable: ["incline_bb"]),
+            make("chest_press_machine", "Brustpresse Maschine", "🧱", .compound, .chest, [.triceps, .shoulders], .machine, .push),
+            make("pec_deck", "Pec Deck", "🪽", .isolation, .chest, [], .machine, .push),
+            make("cable_fly_high", "Cable Flys von oben", "🧵", .isolation, .chest, [], .cable, .push),
+            make("cable_fly_low", "Cable Flys von unten", "🧵", .isolation, .chest, [], .cable, .push),
+            make("pushup", "Liegestütze", "🤸‍♀️", .compound, .chest, [.triceps, .shoulders, .core], .bodyweight, .push),
+
+            // Back
+            make("lat_wide", "Latzug breit", "🪽", .compound, .back, [.biceps], .machine, .pull, comparable: ["lat_neutral", "lat_close"]),
+            make("lat_neutral", "Latzug neutral", "🪽", .compound, .back, [.biceps], .machine, .pull, comparable: ["lat_wide", "lat_close"]),
+            make("lat_close", "Latzug eng", "🪽", .compound, .back, [.biceps], .machine, .pull, comparable: ["lat_wide", "lat_neutral"]),
+            make("pullup_assisted", "Klimmzug assistiert", "🧗‍♀️", .compound, .back, [.biceps, .core], .machine, .pull, difficulty: .advanced, comparable: ["lat_wide"]),
+            make("seated_row", "Sitzendes Rudern", "🚣‍♀️", .compound, .back, [.biceps], .machine, .pull, comparable: ["chest_row", "tbar_row"]),
+            make("chest_row", "Chest Supported Row", "🚣‍♀️", .compound, .back, [.biceps, .rearShoulders], .machine, .pull, comparable: ["seated_row", "tbar_row"]),
+            make("tbar_row", "T-Bar Row", "🚣‍♀️", .compound, .back, [.biceps], .barbell, .pull, comparable: ["seated_row", "chest_row"]),
+            make("onearm_row", "Einarmiges Rudern", "🖐️", .compound, .back, [.biceps, .core], .dumbbell, .pull),
+            make("straight_arm_pulldown", "Straight Arm Pulldown", "🧵", .isolation, .back, [], .cable, .pull),
+            make("face_pull", "Face Pull", "🎯", .isolation, .shoulders, [.back], .cable, .pull),
+            make("reverse_fly", "Reverse Fly", "🪽", .isolation, .shoulders, [.back], .dumbbell, .pull),
+
+            // Shoulders
+            make("shoulder_press_bb", "Schulterdrücken LH", "🛡️", .compound, .shoulders, [.triceps], .barbell, .push, comparable: ["shoulder_press_db", "shoulder_press_machine"]),
+            make("shoulder_press_db", "Schulterdrücken KH", "🛡️", .compound, .shoulders, [.triceps], .dumbbell, .push, comparable: ["shoulder_press_bb", "shoulder_press_machine"]),
+            make("shoulder_press_machine", "Schulterpresse", "🛡️", .compound, .shoulders, [.triceps], .machine, .push, comparable: ["shoulder_press_bb", "shoulder_press_db"]),
+            make("arnold_press", "Arnold Press", "🌀", .compound, .shoulders, [.triceps], .dumbbell, .push),
+            make("lateral_raise_db", "Seitheben KH", "🌟", .isolation, .shoulders, [], .dumbbell, .push, comparable: ["lateral_raise_cable"]),
+            make("lateral_raise_cable", "Seitheben Kabel", "🌟", .isolation, .shoulders, [], .cable, .push, comparable: ["lateral_raise_db"]),
+            make("rear_delt_fly", "Reverse Fly Schultern", "🪽", .isolation, .shoulders, [.back], .dumbbell, .pull),
+
+            // Arms
+            make("curl_db", "Bizepscurls KH", "💪", .isolation, .biceps, [], .dumbbell, .pull, comparable: ["curl_cable", "curl_ez"]),
+            make("curl_cable", "Bizepscurls Kabel", "💪", .isolation, .biceps, [], .cable, .pull, comparable: ["curl_db", "curl_ez"]),
+            make("curl_barbell", "Bizepscurls LH", "💪", .isolation, .biceps, [], .barbell, .pull, comparable: ["curl_ez", "curl_db"]),
+            make("curl_ez", "EZ-Curls", "💪", .isolation, .biceps, [], .barbell, .pull, comparable: ["curl_barbell", "curl_db"]),
+            make("curl_preacher", "Preacher Curl Maschine", "💪", .isolation, .biceps, [], .machine, .pull),
+            make("hammer_curl", "Hammercurls", "🔨", .isolation, .biceps, [], .dumbbell, .pull),
+            make("triceps_rope", "Trizepsdrücken Seil", "🧵", .isolation, .triceps, [], .cable, .push, comparable: ["triceps_bar", "triceps_overhead"]),
+            make("triceps_bar", "Trizepsdrücken Stange", "🧵", .isolation, .triceps, [], .cable, .push, comparable: ["triceps_rope", "triceps_overhead"]),
+            make("triceps_overhead", "Overhead Trizeps Kabel", "🧵", .isolation, .triceps, [], .cable, .push),
+            make("skull_crusher", "Skull Crusher", "💀", .isolation, .triceps, [], .barbell, .push),
+            make("close_grip_bench", "Enges Bankdrücken", "🤏", .compound, .triceps, [.chest, .shoulders], .barbell, .push),
+
+            // Legs / Glutes
+            make("back_squat", "Kniebeuge", "🏋️‍♀️", .compound, .quadriceps, [.glutes, .hamstrings, .core], .barbell, .squat, comparable: ["front_squat", "hack_squat", "leg_press"]),
+            make("front_squat", "Front Squat", "🏋️‍♀️", .compound, .quadriceps, [.core, .glutes], .barbell, .squat, comparable: ["back_squat", "hack_squat"]),
+            make("goblet_squat", "Goblet Squat", "🏋️‍♀️", .compound, .quadriceps, [.glutes, .core], .dumbbell, .squat, comparable: ["back_squat", "leg_press"]),
+            make("leg_press", "Beinpresse", "🦵", .compound, .quadriceps, [.glutes], .machine, .squat, comparable: ["hack_squat", "back_squat"]),
+            make("hack_squat", "Hack Squat", "🦵", .compound, .quadriceps, [.glutes], .machine, .squat, comparable: ["leg_press", "back_squat"]),
+            make("smith_squat", "Smith Squat", "🏋️‍♀️", .compound, .quadriceps, [.glutes], .smith, .squat),
+            make("bulgarian_split_squat", "Bulgarian Split Squat", "🫶", .compound, .quadriceps, [.glutes, .core], .dumbbell, .squat, comparable: ["reverse_lunge", "walking_lunge"]),
+            make("walking_lunge", "Walking Lunges", "🚶‍♀️", .compound, .quadriceps, [.glutes, .hamstrings], .dumbbell, .squat, comparable: ["reverse_lunge", "bulgarian_split_squat"]),
+            make("reverse_lunge", "Reverse Lunges", "↩️", .compound, .quadriceps, [.glutes, .hamstrings], .dumbbell, .squat, comparable: ["walking_lunge", "bulgarian_split_squat"]),
+            make("hip_thrust_bb", "Hip Thrust", "🍑", .compound, .glutes, [.hamstrings, .core], .barbell, .hinge, comparable: ["hip_thrust_machine", "glute_bridge"]),
+            make("hip_thrust_machine", "Hip Thrust Maschine", "🍑", .compound, .glutes, [.hamstrings], .machine, .hinge, comparable: ["hip_thrust_bb", "glute_bridge"]),
+            make("glute_bridge", "Glute Bridge", "🍑", .compound, .glutes, [.hamstrings], .barbell, .hinge, comparable: ["hip_thrust_bb", "hip_thrust_machine"]),
+            make("romanian_deadlift", "Romanian Deadlift", "🧲", .compound, .hamstrings, [.glutes, .back], .barbell, .hinge, comparable: ["conventional_deadlift"]),
+            make("conventional_deadlift", "Kreuzheben", "🧲", .compound, .hamstrings, [.glutes, .back, .core], .barbell, .hinge, difficulty: .advanced, comparable: ["romanian_deadlift"]),
+            make("leg_curl_lying", "Beinbeuger liegend", "🪝", .isolation, .hamstrings, [], .machine, .hinge),
+            make("leg_curl_seated", "Beinbeuger sitzend", "🪝", .isolation, .hamstrings, [], .machine, .hinge),
+            make("leg_extension", "Beinstrecker", "🦵", .isolation, .quadriceps, [], .machine, .squat),
+            make("abductor_machine", "Abduktoren Maschine", "🍑", .isolation, .glutes, [], .machine, .hinge),
+            make("adductor_machine", "Adduktoren Maschine", "🧠", .isolation, .quadriceps, [], .machine, .squat),
+            make("calf_raise_standing", "Wadenheben stehend", "🐄", .isolation, .calves, [], .machine, .carry),
+            make("calf_raise_seated", "Wadenheben sitzend", "🐄", .isolation, .calves, [], .machine, .carry),
+            make("cable_kickback", "Cable Kickback", "🍑", .isolation, .glutes, [], .cable, .hinge),
+            make("cable_pullthrough", "Cable Pull-Through", "🧵", .compound, .glutes, [.hamstrings, .core], .cable, .hinge),
+
+            // Core / Cardio / Mobility
+            make("plank", "Plank", "🧱", .mobility, .core, [], .bodyweight, .rotation),
+            make("side_plank", "Side Plank", "🧱", .mobility, .core, [], .bodyweight, .rotation),
+            make("dead_bug", "Dead Bug", "🐞", .mobility, .core, [], .bodyweight, .rotation),
+            make("cable_crunch", "Cable Crunch", "🧠", .isolation, .core, [], .cable, .rotation),
+            make("hanging_knee_raise", "Hanging Knee Raise", "⬆️", .compound, .core, [.shoulders], .bodyweight, .rotation),
+            make("pallof_press", "Pallof Press", "🛡️", .mobility, .core, [], .cable, .rotation),
+            make("treadmill_walk", "Laufband Gehen", "🚶‍♀️", .cardio, .fullBody, [], .bodyweight, .cardio),
+            make("bike", "Bike", "🚴‍♀️", .cardio, .fullBody, [], .machine, .cardio),
+            make("rower", "Rudergerät", "🚣‍♀️", .cardio, .fullBody, [], .machine, .cardio),
+            make("mobility_hips", "Hüftmobilität", "🫧", .mobility, .fullBody, [], .band, .mobility),
+            make("mobility_shoulders", "Schulter-Mobility", "🫧", .mobility, .fullBody, [], .band, .mobility)
+        ]
+    }
+}
+
+// MARK: - Small helper for a clean chart
+
+struct TrainingPoint: Identifiable, Hashable {
+    var id: String { sessionID + exerciseID + weight.description + reps.description }
+    let sessionID: String
+    let exerciseID: String
+    let exerciseName: String
+    let date: Date
+    let phase: CyclePhase
+    let weight: Double
+    let reps: Int
+    let rir: Int
+    var volume: Double { weight * Double(reps) }
+}
