@@ -1,0 +1,720 @@
+import Foundation
+import HealthKit
+import UserNotifications
+import StoreKit
+
+// MARK: - Data store
+
+@MainActor
+final class LunaraDataStore {
+    private let key = "lunara.snapshot.v1"
+
+    func save(_ snapshot: AppSnapshot) {
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    func load() -> AppSnapshot? {
+        guard
+            let data = UserDefaults.standard.data(forKey: key),
+            let snapshot = try? JSONDecoder().decode(AppSnapshot.self, from: data)
+        else { return nil }
+        return snapshot
+    }
+}
+
+// MARK: - Cycle service (HealthKit + manual)
+
+final class LunaraCycleService {
+    private let healthStore = HKHealthStore()
+
+    func requestAuthorization(completion: @escaping (Bool) -> Void) {
+        guard HKHealthStore.isHealthDataAvailable(),
+              let menstrualType = HKObjectType.categoryType(forIdentifier: .menstrualFlow) else {
+            completion(false)
+            return
+        }
+
+        healthStore.requestAuthorization(toShare: [], read: [menstrualType]) { success, _ in
+            completion(success)
+        }
+    }
+
+    func fetchCycleState(completion: @escaping (CycleState) -> Void) {
+        guard HKHealthStore.isHealthDataAvailable(),
+              let menstrualType = HKObjectType.categoryType(forIdentifier: .menstrualFlow) else {
+            completion(CycleState())
+            return
+        }
+
+        requestAuthorization { success in
+            guard success else {
+                completion(CycleState())
+                return
+            }
+
+            let startDate = Calendar.current.date(byAdding: .month, value: -12, to: Date()) ?? Date().addingTimeInterval(-365 * 24 * 3600)
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: Date(), options: .strictEndDate)
+            let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+
+            let query = HKSampleQuery(sampleType: menstrualType, predicate: predicate, limit: 100, sortDescriptors: [sort]) { _, samples, _ in
+                let catSamples = (samples as? [HKCategorySample]) ?? []
+
+                let periodStarts = catSamples.compactMap { sample -> Date? in
+                    let isStart = (sample.metadata?[HKMetadataKeyMenstrualCycleStart] as? Bool) ?? false
+                    return isStart ? sample.startDate : nil
+                }.sorted()
+
+                let computedStarts = periodStarts.isEmpty ? catSamples.map(\.startDate).sorted() : periodStarts
+                guard let lastStart = computedStarts.last else {
+                    completion(CycleState())
+                    return
+                }
+
+                let avgCycle = Self.averageCycleLength(starts: computedStarts)
+                let cycleState = CycleState(
+                    source: .healthKit,
+                    lastPeriodStart: lastStart,
+                    cycleLengthDays: avgCycle,
+                    periodLengthDays: 5,
+                    confidence: 0.75,
+                    notes: "HealthKit-Sync"
+                )
+                completion(cycleState)
+            }
+
+            self.healthStore.execute(query)
+        }
+    }
+
+    private static func averageCycleLength(starts: [Date]) -> Int {
+        guard starts.count >= 2 else { return 28 }
+        let diffs: [Int] = zip(starts, starts.dropFirst()).map { earlier, later in
+            Calendar.current.dateComponents([.day], from: earlier, to: later).day ?? 28
+        }
+        let avg = Double(diffs.reduce(0, +)) / Double(diffs.count)
+        return max(21, min(40, Int(avg.rounded())))
+    }
+}
+
+final class LunaraCycleLearningEngine {
+    func apply(_ correction: CycleCorrection, to cycle: inout CycleState) {
+        switch correction {
+        case .confirmed:
+            cycle.confidence = min(1.0, cycle.confidence + 0.05)
+        case .notStarted:
+            cycle.cycleLengthDays = min(40, cycle.cycleLengthDays + 1)
+            cycle.confidence = max(0.2, cycle.confidence - 0.05)
+        case .startedEarlier:
+            cycle.cycleLengthDays = max(21, cycle.cycleLengthDays - 1)
+            cycle.confidence = max(0.2, cycle.confidence - 0.03)
+        case .startedLater:
+            cycle.cycleLengthDays = min(40, cycle.cycleLengthDays + 1)
+            cycle.confidence = max(0.2, cycle.confidence - 0.03)
+        }
+        cycle.source = .manual
+    }
+}
+
+// MARK: - Progression engine
+
+final class LunaraProgressionEngine {
+    func recommendation(
+        for exercise: Exercise,
+        history: [TrainingSession],
+        cycle: CycleState,
+        profile: ProgressionProfile
+    ) -> RecommendationResult {
+        let phase = cycle.currentPhase()
+
+        let lastLog = history
+            .reversed()
+            .flatMap(\.exerciseLogs)
+            .first(where: { $0.exerciseID == exercise.id })
+
+        let lastSet = lastLog?.sets.last
+        let lastWeight = max(0.0, lastSet?.weight ?? 20)
+        let lastReps = max(1, lastSet?.reps ?? 8)
+        let lastRIR = lastSet?.rir ?? 2
+
+        let cycleMultiplier = phase.baseMultiplier * profile.cycleSensitivity
+        let learningMultiplier = max(0.85, min(1.20, profile.adaptationFactor))
+        let baseProgression = 1.0 + profile.baseProgressionRate
+
+        let expectedWeight = roundToHalf(lastWeight * cycleMultiplier * learningMultiplier * baseProgression)
+
+        let repTarget: Int
+        if lastRIR >= 3 {
+            repTarget = min(12, lastReps + 1)
+        } else if lastRIR <= 1 {
+            repTarget = max(4, lastReps - 2)
+        } else {
+            repTarget = max(4, min(12, lastReps - 1))
+        }
+
+        let note: String
+        let warning: String
+
+        switch phase {
+        case .menstruation:
+            note = "💜 Heute eher Technik und saubere Ausführung."
+            warning = "Leicht reduziertes Ziel ist normal."
+        case .follicular:
+            note = "🌱 Gute Phase für Progression."
+            warning = "Starte kontrolliert, steigere sauber."
+        case .ovulation:
+            note = "🔥 Hohe Leistung möglich."
+            warning = "Auf saubere Gelenkführung achten."
+        case .luteal:
+            note = "💜 Volumen etwas anpassen, Regeneration ernst nehmen."
+            warning = "Leichte Müdigkeit ist möglich."
+        case .unknown:
+            note = "✨ Ohne Zyklusdaten arbeiten wir konservativ."
+            warning = "Beobachte dein Feedback."
+        }
+
+        return RecommendationResult(
+            weight: expectedWeight,
+            reps: repTarget,
+            note: note,
+            warning: warning,
+            phase: phase,
+            confidence: cycle.confidence * profile.confidence
+        )
+    }
+
+    func update(profile: inout ProgressionProfile, feedback: TrainingFeedback, cycleCorrection: Bool = false) {
+        switch feedback {
+        case .tooEasy:
+            profile.adaptationFactor = min(1.25, profile.adaptationFactor + 0.04)
+            profile.confidence = min(1.0, profile.confidence + 0.03)
+        case .perfect:
+            profile.adaptationFactor = min(1.20, profile.adaptationFactor + 0.01)
+            profile.confidence = min(1.0, profile.confidence + 0.02)
+        case .tooHard:
+            profile.adaptationFactor = max(0.80, profile.adaptationFactor - 0.05)
+            profile.confidence = max(0.2, profile.confidence - 0.05)
+        }
+
+        if cycleCorrection {
+            profile.cycleSensitivity = min(1.35, profile.cycleSensitivity + 0.03)
+        }
+    }
+
+    private func roundToHalf(_ value: Double) -> Double {
+        (value * 2).rounded() / 2
+    }
+}
+
+// MARK: - Notifications
+
+final class LunaraNotificationService {
+    func requestAuthorization() async -> Bool {
+        do {
+            return try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
+        } catch {
+            return false
+        }
+    }
+
+    func scheduleWorkoutReminder(hour: Int = 18, minute: Int = 30, phase: CyclePhase = .unknown) async {
+        let content = UNMutableNotificationContent()
+        content.title = "Hey, Lust zu trainieren? 💜"
+        content.body = reminderText(for: phase)
+        content.sound = .default
+
+        var dateComponents = DateComponents()
+        dateComponents.hour = hour
+        dateComponents.minute = minute
+
+        let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
+        let request = UNNotificationRequest(identifier: "lunara.workout.reminder", content: content, trigger: trigger)
+        try? await UNUserNotificationCenter.current().add(request)
+    }
+
+    func cancelWorkoutReminder() async {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["lunara.workout.reminder"])
+    }
+
+    private func reminderText(for phase: CyclePhase) -> String {
+        switch phase {
+        case .menstruation: return "Heute lieber sanft starten und dich nicht stressen."
+        case .follicular: return "Gute Phase für Fortschritt."
+        case .ovulation: return "Deine Power-Phase wartet."
+        case .luteal: return "Stabil und smart trainieren."
+        case .unknown: return "Ein kurzes Workout reicht heute auch."
+        }
+    }
+}
+
+// MARK: - Subscription service (StoreKit 2 scaffold)
+
+@MainActor
+final class LunaraSubscriptionService: ObservableObject {
+    @Published var state: SubscriptionState = .init()
+    @Published var products: [Product] = []
+
+    let monthlyProductID = "lunara.premium.monthly"
+    let yearlyProductID = "lunara.premium.yearly"
+
+    func loadProducts() async {
+        do {
+            products = try await Product.products(for: [monthlyProductID, yearlyProductID])
+        } catch {
+            products = []
+        }
+    }
+
+    func isPremiumActive() -> Bool {
+        switch state.status {
+        case .premium: return true
+        case .trial:
+            if let trialEndsAt = state.trialEndsAt { return trialEndsAt > Date() }
+            return false
+        case .free:
+            return false
+        }
+    }
+
+    func activateManualPremiumPreview() {
+        state.status = .premium
+    }
+
+    func purchase(_ product: Product) async {
+        do {
+            let result = try await product.purchase()
+            switch result {
+            case .success(let verification):
+                switch verification {
+                case .verified:
+                    state.status = .premium
+                case .unverified:
+                    break
+                }
+            case .pending, .userCancelled:
+                break
+            @unknown default:
+                break
+            }
+        } catch {
+            print("Purchase failed: \(error)")
+        }
+    }
+
+    func restore() async {
+        do {
+            try await AppStore.sync()
+            await refreshEntitlements()
+        } catch {
+            print("Restore failed: \(error)")
+        }
+    }
+
+    func refreshEntitlements() async {
+        var premium = false
+        for await result in Transaction.currentEntitlements {
+            guard case .verified(let transaction) = result else { continue }
+            if transaction.productType == .autoRenewable {
+                premium = true
+            }
+        }
+        state.status = premium ? .premium : .free
+    }
+
+    func applyInvite(code: String) -> Bool {
+        if code.uppercased() == state.referralCode.uppercased() {
+            state.status = .trial
+            state.trialEndsAt = Calendar.current.date(byAdding: .day, value: 7, to: Date())
+            state.discountPercent = max(state.discountPercent, 20)
+            state.inviteRedemptions += 1
+            return true
+        }
+        return false
+    }
+
+    func shareCode() -> String {
+        state.referralCode
+    }
+}
+
+// MARK: - App store
+
+@MainActor
+final class LunaraStore: ObservableObject {
+    @Published var profile: UserProfile = UserProfile()
+    @Published var cycleState: CycleState = CycleState()
+    @Published var cycleLearning: CycleLearningProfile = CycleLearningProfile()
+    @Published var subscriptionService = LunaraSubscriptionService()
+    @Published var goals: [Goal] = [Goal(title: "10× Gym pro Monat", targetSessionsPerMonth: 10)]
+    @Published var exerciseLibrary: [Exercise] = ExerciseSeed.defaultLibrary()
+    @Published var templates: [TrainingTemplate] = []
+    @Published var sessions: [TrainingSession] = []
+    @Published var feedPosts: [FeedPost] = []
+    @Published var progressionProfiles: [String: ProgressionProfile] = [:]
+    @Published var inviteReward: InviteReward = InviteReward(code: String(UUID().uuidString.prefix(6)).uppercased(), freeTrialDays: 7, discountPercent: 20, usedCount: 0)
+
+    @Published var draftLogs: [ExerciseLog] = []
+    @Published var draftTitle: String = "Spontanes Training"
+    @Published var activeTemplateID: String? = nil
+
+    @Published var notificationsEnabled: Bool = false
+    @Published var selectedExerciseFilter: ExerciseCategory? = nil
+
+    private let dataStore = LunaraDataStore()
+    private let cycleService = LunaraCycleService()
+    private let cycleLearningEngine = LunaraCycleLearningEngine()
+    private let progressionEngine = LunaraProgressionEngine()
+    let notificationService = LunaraNotificationService()
+
+    init() {
+        loadOrBootstrap()
+    }
+
+    var currentPhase: CyclePhase {
+        cycleState.currentPhase()
+    }
+
+    var todaysTemplates: [TrainingTemplate] {
+        templates.filter { $0.isActiveOnToday }
+    }
+
+    var monthlyGoal: Goal? {
+        goals.first(where: { $0.active })
+    }
+
+    var monthlySessionCount: Int {
+        sessions.filter { Calendar.current.isDate($0.date, equalTo: Date(), toGranularity: .month) }.count
+    }
+
+    var monthlyProgress: Double {
+        guard let goal = monthlyGoal else { return 0 }
+        return min(1, Double(monthlySessionCount) / Double(goal.targetSessionsPerMonth))
+    }
+
+    func loadOrBootstrap() {
+        if let snapshot = dataStore.load() {
+            profile = snapshot.profile
+            cycleState = snapshot.cycleState
+            cycleLearning = snapshot.cycleLearning
+            subscriptionService.state = snapshot.subscription
+            goals = snapshot.goals
+            exerciseLibrary = snapshot.exerciseLibrary
+            templates = snapshot.templates
+            sessions = snapshot.sessions
+            feedPosts = snapshot.feedPosts
+            progressionProfiles = snapshot.progressionProfiles
+            inviteReward = snapshot.inviteReward
+        } else {
+            bootstrapDefaults()
+            save()
+        }
+    }
+
+    func bootstrapDefaults() {
+        profile = UserProfile(displayName: "Athletin", bio: "Gym, Zyklus und smarter Fortschritt 💜")
+        cycleState = CycleState(source: .none, lastPeriodStart: nil, cycleLengthDays: 28, periodLengthDays: 5, confidence: 0.35, notes: "")
+        cycleLearning = CycleLearningProfile()
+        exerciseLibrary = ExerciseSeed.defaultLibrary()
+        templates = [
+            TrainingTemplate(
+                name: "Push Day",
+                emoji: "🔥",
+                weekdayBindings: [.monday, .thursday],
+                plannedExercises: [
+                    TemplateExercise(exerciseID: "bench_barbell", exerciseName: "Bankdrücken", icon: "🏋️‍♀️", targetSets: 4, targetReps: 6, targetRIR: 2, restSeconds: 120),
+                    TemplateExercise(exerciseID: "shoulder_press_db", exerciseName: "Schulterdrücken KH", icon: "🛡️", targetSets: 3, targetReps: 8, targetRIR: 2, restSeconds: 90),
+                    TemplateExercise(exerciseID: "triceps_rope", exerciseName: "Trizepsdrücken Seil", icon: "🧵", targetSets: 3, targetReps: 10, targetRIR: 1, restSeconds: 75)
+                ],
+                defaultRestSeconds: 90,
+                isCustom: false
+            ),
+            TrainingTemplate(
+                name: "Leg Day",
+                emoji: "🍑",
+                weekdayBindings: [.wednesday, .saturday],
+                plannedExercises: [
+                    TemplateExercise(exerciseID: "back_squat", exerciseName: "Kniebeuge", icon: "🏋️‍♀️", targetSets: 4, targetReps: 5, targetRIR: 2, restSeconds: 150),
+                    TemplateExercise(exerciseID: "hip_thrust_bb", exerciseName: "Hip Thrust", icon: "🍑", targetSets: 4, targetReps: 8, targetRIR: 1, restSeconds: 120),
+                    TemplateExercise(exerciseID: "leg_curl_seated", exerciseName: "Beinbeuger sitzend", icon: "🪝", targetSets: 3, targetReps: 10, targetRIR: 1, restSeconds: 75)
+                ],
+                defaultRestSeconds: 120,
+                isCustom: false
+            )
+        ]
+        sessions = []
+        feedPosts = [
+            FeedPost(authorName: "Lunara", authorEmoji: "💜", title: "Willkommen", body: "Dein Training wird jetzt zyklusbewusst geplant.", isFriendActivity: false)
+        ]
+        progressionProfiles = [:]
+        inviteReward = InviteReward(code: String(UUID().uuidString.prefix(6)).uppercased(), freeTrialDays: 7, discountPercent: 20, usedCount: 0)
+    }
+
+    func save() {
+        let snapshot = AppSnapshot(
+            profile: profile,
+            cycleState: cycleState,
+            cycleLearning: cycleLearning,
+            subscription: subscriptionService.state,
+            goals: goals,
+            exerciseLibrary: exerciseLibrary,
+            templates: templates,
+            sessions: sessions,
+            feedPosts: feedPosts,
+            progressionProfiles: progressionProfiles,
+            inviteReward: inviteReward
+        )
+        dataStore.save(snapshot)
+    }
+
+    func syncCycleFromHealthKit() {
+        cycleService.fetchCycleState { [weak self] state in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.cycleState = state
+                self.cycleLearning.lastConfirmedPeriodStart = state.lastPeriodStart
+                self.cycleLearning.confidenceScore = state.confidence
+                self.save()
+            }
+        }
+    }
+
+    func setManualCycle(lastPeriodStart: Date, cycleLengthDays: Int, periodLengthDays: Int) {
+        cycleState = CycleState(
+            source: .manual,
+            lastPeriodStart: lastPeriodStart,
+            cycleLengthDays: cycleLengthDays,
+            periodLengthDays: periodLengthDays,
+            confidence: 0.70,
+            notes: "Manuell eingegeben"
+        )
+        cycleLearning.lastConfirmedPeriodStart = lastPeriodStart
+        cycleLearning.averageCycleLength = cycleLengthDays
+        cycleLearning.averagePeriodLength = periodLengthDays
+        save()
+    }
+
+    func applyCycleCorrection(_ correction: CycleCorrection) {
+        cycleLearningEngine.apply(correction, to: &cycleState)
+        cycleLearning.averageCycleLength = cycleState.cycleLengthDays
+        cycleLearning.lastConfirmedPeriodStart = cycleState.lastPeriodStart
+        cycleLearning.confidenceScore = cycleState.confidence
+        save()
+    }
+
+    func recommendation(for exerciseID: String) -> RecommendationResult {
+        guard let exercise = exerciseLibrary.first(where: { $0.id == exerciseID }) else {
+            return RecommendationResult(weight: 20, reps: 8, note: "✨", warning: "", phase: currentPhase, confidence: 0.5)
+        }
+
+        let profile = progressionProfiles[exerciseID] ?? ProgressionProfile()
+        let result = progressionEngine.recommendation(for: exercise, history: sessions, cycle: cycleState, profile: profile)
+        return result
+    }
+
+    func updateFeedback(exerciseID: String, feedback: TrainingFeedback, cycleCorrection: Bool = false) {
+        var profile = progressionProfiles[exerciseID] ?? ProgressionProfile()
+        progressionEngine.update(profile: &profile, feedback: feedback, cycleCorrection: cycleCorrection)
+        progressionProfiles[exerciseID] = profile
+        save()
+    }
+
+    func addExerciseToDraft(_ exercise: Exercise) {
+        guard !draftLogs.contains(where: { $0.exerciseID == exercise.id }) else { return }
+        let log = ExerciseLog(
+            exerciseID: exercise.id,
+            exerciseName: exercise.name,
+            icon: exercise.icon,
+            targetSets: 3,
+            targetReps: 8,
+            targetRIR: 2,
+            restSeconds: 90
+        )
+        draftLogs.append(log)
+        save()
+    }
+
+    func removeExerciseFromDraft(_ logID: String) {
+        draftLogs.removeAll { $0.id == logID }
+        save()
+    }
+
+    func addSet(to logID: String, weight: Double, reps: Int, rir: Int, restSeconds: Int) {
+        guard let index = draftLogs.firstIndex(where: { $0.id == logID }) else { return }
+        let newSet = ExerciseSet(weight: weight, reps: reps, rir: rir, restSeconds: restSeconds)
+        draftLogs[index].sets.append(newSet)
+        save()
+    }
+
+    func clearDraft(title: String = "Spontanes Training") {
+        draftLogs = []
+        draftTitle = title
+        activeTemplateID = nil
+    }
+
+    func loadTemplateIntoDraft(_ template: TrainingTemplate) {
+        activeTemplateID = template.id
+        draftTitle = template.name
+        draftLogs = template.plannedExercises.map {
+            ExerciseLog(
+                exerciseID: $0.exerciseID,
+                exerciseName: $0.exerciseName,
+                icon: $0.icon,
+                targetSets: $0.targetSets,
+                targetReps: $0.targetReps,
+                targetRIR: $0.targetRIR,
+                restSeconds: $0.restSeconds,
+                notes: ""
+            )
+        }
+        save()
+    }
+
+    func finishTraining(durationMinutes: Int = 60) {
+        guard !draftLogs.isEmpty else { return }
+
+        let session = TrainingSession(
+            date: Date(),
+            title: draftTitle,
+            templateID: activeTemplateID,
+            cyclePhase: currentPhase,
+            durationMinutes: durationMinutes,
+            exerciseLogs: draftLogs,
+            isSpontaneous: activeTemplateID == nil
+        )
+
+        sessions.append(session)
+        feedPosts.insert(
+            FeedPost(
+                authorName: profile.displayName,
+                authorEmoji: "💜",
+                title: "Training abgeschlossen",
+                body: "\(session.totalSets) Sätze · \(Int(session.totalVolume)) kg Volumen",
+                isFriendActivity: false
+            ),
+            at: 0
+        )
+        clearDraft()
+        save()
+    }
+
+    func addTemplate(_ template: TrainingTemplate) {
+        if let index = templates.firstIndex(where: { $0.id == template.id }) {
+            templates[index] = template
+        } else {
+            templates.append(template)
+        }
+        save()
+    }
+
+    func deleteTemplate(id: String) {
+        templates.removeAll { $0.id == id }
+        save()
+    }
+
+    func addCustomExercise(
+        name: String,
+        icon: String,
+        primaryMuscle: MuscleGroup,
+        category: ExerciseCategory,
+        equipment: EquipmentType,
+        movement: MovementPattern,
+        comparableExerciseIDs: [String]
+    ) {
+        guard subscriptionService.isPremiumActive() else { return }
+        let newExercise = Exercise(
+            id: UUID().uuidString,
+            name: name,
+            icon: icon,
+            category: category,
+            primaryMuscle: primaryMuscle,
+            secondaryMuscles: [],
+            equipment: equipment,
+            movementPattern: movement,
+            difficulty: .intermediate,
+            comparableExerciseIDs: comparableExerciseIDs,
+            isCustom: true
+        )
+        exerciseLibrary.append(newExercise)
+        save()
+    }
+
+    func sessionPoints(for exerciseID: String) -> [TrainingPoint] {
+        sessions.flatMap { session in
+            session.exerciseLogs.compactMap { log in
+                guard log.exerciseID == exerciseID else { return nil }
+                return log.sets.map {
+                    TrainingPoint(
+                        sessionID: session.id,
+                        exerciseID: exerciseID,
+                        exerciseName: log.exerciseName,
+                        date: session.date,
+                        phase: session.cyclePhase,
+                        weight: $0.weight,
+                        reps: $0.reps,
+                        rir: $0.rir
+                    )
+                }
+            }.flatMap { $0 }
+        }
+        .sorted(by: { $0.date < $1.date })
+    }
+
+    func monthlySummary() -> (sessions: Int, sets: Int, volume: Double) {
+        let monthSessions = sessions.filter { Calendar.current.isDate($0.date, equalTo: Date(), toGranularity: .month) }
+        let sets = monthSessions.reduce(0) { $0 + $1.totalSets }
+        let volume = monthSessions.reduce(0) { $0 + $1.totalVolume }
+        return (monthSessions.count, sets, volume)
+    }
+
+    func currentGoalProgressText() -> String {
+        let current = monthlySessionCount
+        let goal = monthlyGoal?.targetSessionsPerMonth ?? 10
+        return "\(current)/\(goal) Trainingseinheiten"
+    }
+
+    func claimInvite(code: String) -> Bool {
+        if subscriptionService.applyInvite(code: code) {
+            inviteReward.usedCount += 1
+            feedPosts.insert(
+                FeedPost(
+                    authorName: "Lunara",
+                    authorEmoji: "💜",
+                    title: "Freundin eingeladen",
+                    body: "7 Tage Trial und Rabatt freigeschaltet.",
+                    isFriendActivity: true
+                ),
+                at: 0
+            )
+            save()
+            return true
+        }
+        return false
+    }
+
+    func shareInviteURL() -> URL {
+        URL(string: "lunara://invite/\(subscriptionService.shareCode())")!
+    }
+
+    func shareTemplateURL(_ template: TrainingTemplate) -> URL {
+        URL(string: "lunara://template/\(template.id)")!
+    }
+
+    func shareSessionURL(_ session: TrainingSession) -> URL {
+        URL(string: "lunara://session/\(session.id)")!
+    }
+
+    func enableNotifications() async {
+        let allowed = await notificationService.requestAuthorization()
+        notificationsEnabled = allowed
+        if allowed {
+            await notificationService.scheduleWorkoutReminder(phase: currentPhase)
+        }
+        save()
+    }
+
+    func disableNotifications() async {
+        await notificationService.cancelWorkoutReminder()
+        notificationsEnabled = false
+        save()
+    }
+}
