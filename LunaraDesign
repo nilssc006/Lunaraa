@@ -1,0 +1,216 @@
+import SwiftUI
+
+extension Color {
+    init(hex: String) {
+        let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: cleaned).scanHexInt64(&int)
+        let r = Double((int >> 16) & 0xFF) / 255
+        let g = Double((int >> 8) & 0xFF) / 255
+        let b = Double(int & 0xFF) / 255
+        self.init(red: r, green: g, blue: b)
+    }
+
+    static let lunaraPrimary = Color(hex: "8A4FFF")
+    static let lunaraLavender = Color(hex: "C8B6FF")
+    static let lunaraPink = Color(hex: "F08BFF")
+    static let lunaraBackground = Color(hex: "120F1A")
+    static let lunaraSurface = Color(hex: "1B1528")
+    static let lunaraSurfaceLight = Color(hex: "241C36")
+    static let lunaraTextSoft = Color(hex: "D8D2EA")
+}
+
+struct LunaraBackground: View {
+    var body: some View {
+        LinearGradient(
+            colors: [Color.lunaraBackground, Color(hex: "1C1830"), Color(hex: "2A1845")],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .overlay(
+            ZStack {
+                Circle()
+                    .fill(Color.lunaraPrimary.opacity(0.18))
+                    .frame(width: 260, height: 260)
+                    .blur(radius: 18)
+                    .offset(x: -120, y: -260)
+
+                Circle()
+                    .fill(Color.lunaraPink.opacity(0.12))
+                    .frame(width: 220, height: 220)
+                    .blur(radius: 18)
+                    .offset(x: 140, y: -180)
+
+                Circle()
+                    .fill(Color.lunaraLavender.opacity(0.10))
+                    .frame(width: 340, height: 340)
+                    .blur(radius: 22)
+                    .offset(x: 120, y: 320)
+            }
+        )
+        .ignoresSafeArea()
+    }
+}
+
+struct LunaraCard<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: 22)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 8)
+    }
+}
+
+struct LunaraPrimaryButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(
+                LinearGradient(
+                    colors: [Color.lunaraPrimary, Color.lunaraPink],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .animation(.easeInOut(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+struct LunaraSecondaryButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(Color.white.opacity(0.08))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+    }
+}
+
+struct LunaraSectionTitle: View {
+    let title: String
+    let subtitle: String?
+
+    init(_ title: String, subtitle: String? = nil) {
+        self.title = title
+        self.subtitle = subtitle
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.title3.bold())
+                .foregroundStyle(.white)
+
+            if let subtitle {
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.lunaraTextSoft.opacity(0.8))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct PhaseBadge: View {
+    let phase: CyclePhase
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(phase.emoji)
+                .font(.title2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(phase.title)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text(phase.trainingHint)
+                    .font(.caption)
+                    .foregroundStyle(Color.lunaraTextSoft.opacity(0.8))
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+struct MetricPill: View {
+    let title: String
+    let value: String
+    let emoji: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(emoji)
+                Spacer()
+            }
+            Text(value)
+                .font(.title3.bold())
+                .foregroundStyle(.white)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(Color.lunaraTextSoft.opacity(0.75))
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+struct ToggleChip: View {
+    let title: String
+    let active: Bool
+
+    var body: some View {
+        Text(title)
+            .font(.caption.bold())
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(active ? Color.lunaraPrimary.opacity(0.9) : Color.white.opacity(0.08))
+            .foregroundStyle(.white)
+            .clipShape(Capsule())
+    }
+}
+
+struct SmallIconButton: View {
+    let systemImage: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(width: 42, height: 42)
+                .background(Color.white.opacity(0.08))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+}
