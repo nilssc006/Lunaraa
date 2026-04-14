@@ -1,0 +1,1373 @@
+import SwiftUI
+import Charts
+import PhotosUI
+
+// MARK: - Main Tab View
+
+struct LunaraMainTabView: View {
+    var body: some View {
+        TabView {
+            LunaraHomeView()
+                .tabItem { Label("Home", systemImage: "house.fill") }
+
+            LunaraTrainingView()
+                .tabItem { Label("Training", systemImage: "figure.strengthtraining.traditional") }
+
+            LunaraExerciseLibraryView()
+                .tabItem { Label("Übungen", systemImage: "list.bullet.rectangle") }
+
+            LunaraProgressView()
+                .tabItem { Label("Fortschritt", systemImage: "chart.line.uptrend.xyaxis") }
+
+            LunaraFeedView()
+                .tabItem { Label("Feed", systemImage: "person.2.fill") }
+
+            LunaraSettingsView()
+                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+        }
+        .tint(.purple)
+    }
+}
+
+// MARK: - Home
+
+struct LunaraHomeView: View {
+    @EnvironmentObject private var store: LunaraStore
+    @State private var showCycleInput = false
+    @State private var showProfile = false
+    @State private var showSubscription = false
+    @State private var showTemplateBuilder = false
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LunaraBackground()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        header
+
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 12) {
+                                PhaseBadge(phase: store.currentPhase)
+                                Text("💜 \(store.currentPhase.trainingHint)")
+                                    .foregroundStyle(.white)
+                                Text(store.currentPhase.nutritionHint)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.lunaraTextSoft.opacity(0.8))
+                            }
+                        }
+
+                        LunaraCard {
+                            let summary = store.monthlySummary()
+                            VStack(alignment: .leading, spacing: 12) {
+                                LunaraSectionTitle("Monatsziel", subtitle: "Dein Fortschritt im aktuellen Monat")
+                                Text(store.currentGoalProgressText())
+                                    .foregroundStyle(.white)
+                                    .font(.headline)
+                                ProgressView(value: store.monthlyProgress)
+                                    .tint(.lunaraPink)
+                                HStack {
+                                    MetricPill(title: "Sessions", value: "\(summary.sessions)", emoji: "🏋️")
+                                    MetricPill(title: "Sets", value: "\(summary.sets)", emoji: "✨")
+                                }
+                            }
+                        }
+
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 12) {
+                                LunaraSectionTitle("Schnellzugriff", subtitle: "Alles, was du heute brauchst")
+                                HStack(spacing: 10) {
+                                    Button("Training") { store.clearDraft(title: "Spontanes Training") }
+                                        .buttonStyle(LunaraPrimaryButton())
+                                    Button("Zyklus") { showCycleInput = true }
+                                        .buttonStyle(LunaraSecondaryButton())
+                                }
+                                HStack(spacing: 10) {
+                                    Button("Vorlagen") { showTemplateBuilder = true }
+                                        .buttonStyle(LunaraSecondaryButton())
+                                    Button("Abo") { showSubscription = true }
+                                        .buttonStyle(LunaraSecondaryButton())
+                                }
+                            }
+                        }
+
+                        if let nextTemplate = store.todaysTemplates.first {
+                            LunaraCard {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    LunaraSectionTitle("Heutige Vorlage", subtitle: "Passend zu deinem Wochentag")
+                                    Text("\(nextTemplate.emoji) \(nextTemplate.name)")
+                                        .font(.headline)
+                                        .foregroundStyle(.white)
+                                    Text("\(nextTemplate.plannedExercises.count) Übungen · \(nextTemplate.defaultRestSeconds)s Pause")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Color.lunaraTextSoft.opacity(0.75))
+                                    Button("Vorlage laden") {
+                                        store.loadTemplateIntoDraft(nextTemplate)
+                                    }
+                                    .buttonStyle(LunaraPrimaryButton())
+                                }
+                            }
+                        } else {
+                            LunaraCard {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    LunaraSectionTitle("Heute spontan?", subtitle: "Oder du startest direkt ohne Vorlage")
+                                    Text("Du kannst jederzeit Übungen hinzufügen oder ein komplett neues Training starten.")
+                                        .foregroundStyle(Color.lunaraTextSoft.opacity(0.8))
+                                        .font(.subheadline)
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Lunara")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showProfile = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            ProfileAvatarView(data: store.profile.avatarData, size: 30)
+                            Text(store.profile.displayName)
+                                .foregroundStyle(.white)
+                                .font(.subheadline.bold())
+                        }
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showSubscription = true
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(.white)
+                    }
+                }
+            }
+            .sheet(isPresented: $showCycleInput) { LunaraCycleInputView() }
+            .sheet(isPresented: $showProfile) { LunaraProfileView() }
+            .sheet(isPresented: $showSubscription) { LunaraSubscriptionView() }
+            .sheet(isPresented: $showTemplateBuilder) { LunaraTemplateBuilderView() }
+        }
+    }
+
+    private var header: some View {
+        LunaraCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Heute 🌙")
+                            .font(.largeTitle.bold())
+                            .foregroundStyle(.white)
+                        Text("Hi \(store.profile.displayName), du bist bereit für dein nächstes smartes Training.")
+                            .foregroundStyle(Color.lunaraTextSoft.opacity(0.9))
+                    }
+                    Spacer()
+                    ProfileAvatarView(data: store.profile.avatarData, size: 56)
+                }
+
+                Text("Sicherheit: \(Int(store.cycleState.confidence * 100))% · Quelle: \(store.cycleState.source.rawValue)")
+                    .font(.caption)
+                    .foregroundStyle(Color.lunaraTextSoft.opacity(0.7))
+            }
+        }
+    }
+}
+
+// MARK: - Training
+
+struct LunaraTrainingView: View {
+    @EnvironmentObject private var store: LunaraStore
+    @State private var showExercisePicker = false
+    @State private var selectedExerciseID: String?
+    @State private var restRemaining = 0
+    @State private var restTimer: Timer?
+    @State private var durationMinutes = 60
+    @State private var showTemplateBuilder = false
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LunaraBackground()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        if let template = store.todaysTemplates.first, store.activeTemplateID == nil {
+                            LunaraCard {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    LunaraSectionTitle("Heute passt die Vorlage", subtitle: "Du kannst sie mit einem Tap laden")
+                                    Text("\(template.emoji) \(template.name)")
+                                        .foregroundStyle(.white)
+                                        .font(.headline)
+                                    Button("Vorlage laden") {
+                                        store.loadTemplateIntoDraft(template)
+                                    }
+                                    .buttonStyle(LunaraPrimaryButton())
+                                }
+                            }
+                        }
+
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 12) {
+                                LunaraSectionTitle("Training starten", subtitle: "Spontan oder mit Vorlage")
+                                HStack {
+                                    Button("Übung hinzufügen") { showExercisePicker = true }
+                                        .buttonStyle(LunaraPrimaryButton())
+                                    Button("Vorlagen") { showTemplateBuilder = true }
+                                        .buttonStyle(LunaraSecondaryButton())
+                                }
+                                Text("Zyklus: \(store.currentPhase.emoji) \(store.currentPhase.title)")
+                                    .foregroundStyle(.white)
+                                    .font(.subheadline.bold())
+                            }
+                        }
+
+                        if restRemaining > 0 {
+                            LunaraCard {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    LunaraSectionTitle("Pausentimer", subtitle: "Nächster Satz in")
+                                    Text("\(restRemaining)s")
+                                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                                        .foregroundStyle(.white)
+                                    Button("Timer stoppen") {
+                                        stopRestTimer()
+                                    }
+                                    .buttonStyle(LunaraSecondaryButton())
+                                }
+                            }
+                        }
+
+                        ForEach(store.draftLogs.indices, id: \.self) { idx in
+                            exerciseDraftCard(for: idx)
+                        }
+
+                        Button {
+                            store.finishTraining(durationMinutes: durationMinutes)
+                        } label: {
+                            Text("💜 Training beenden & speichern")
+                        }
+                        .buttonStyle(LunaraPrimaryButton())
+                        .disabled(store.draftLogs.isEmpty)
+
+                        Spacer(minLength: 80)
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Training")
+            .sheet(isPresented: $showExercisePicker) {
+                LunaraExerciseLibraryView(selectionMode: true) { exercise in
+                    store.addExerciseToDraft(exercise)
+                    selectedExerciseID = exercise.id
+                }
+            }
+            .sheet(isPresented: $showTemplateBuilder) {
+                LunaraTemplateBuilderView()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func exerciseDraftCard(for index: Int) -> some View {
+        let log = store.draftLogs[index]
+        let recommendation = store.recommendation(for: log.exerciseID)
+
+        LunaraCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("\(log.icon) \(log.exerciseName)")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Button {
+                        store.removeExerciseFromDraft(log.id)
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundStyle(.red.opacity(0.9))
+                    }
+                }
+
+                Text("Empfehlung: \(recommendation.weight, specifier: "%.1f") kg × \(recommendation.reps)")
+                    .foregroundStyle(.white)
+                Text(recommendation.note)
+                    .font(.caption)
+                    .foregroundStyle(Color.lunaraTextSoft.opacity(0.8))
+                Text(recommendation.warning)
+                    .font(.caption2)
+                    .foregroundStyle(Color.lunaraTextSoft.opacity(0.6))
+
+                HStack(spacing: 8) {
+                    Stepper(
+                        "kg \(String(format: "%.1f", log.sets.last?.weight ?? recommendation.weight))",
+                        value: Binding(
+                            get: { log.sets.last?.weight ?? recommendation.weight },
+                            set: { _ in }
+                        ),
+                        in: 0...250,
+                        step: 0.5
+                    )
+                    .labelsHidden()
+
+                    Stepper(
+                        "Wdh \(log.sets.last?.reps ?? recommendation.reps)",
+                        value: Binding(
+                            get: { log.sets.last?.reps ?? recommendation.reps },
+                            set: { _ in }
+                        ),
+                        in: 1...30
+                    )
+                    .labelsHidden()
+                }
+
+                HStack(spacing: 8) {
+                    Button("Satz +") {
+                        let currentWeight = log.sets.last?.weight ?? recommendation.weight
+                        let currentReps = log.sets.last?.reps ?? recommendation.reps
+                        store.addSet(
+                            to: log.id,
+                            weight: currentWeight,
+                            reps: currentReps,
+                            rir: 2,
+                            restSeconds: log.restSeconds
+                        )
+                        startRestTimer(seconds: log.restSeconds)
+                    }
+                    .buttonStyle(LunaraPrimaryButton())
+
+                    Button("Zu leicht") { store.updateFeedback(exerciseID: log.exerciseID, feedback: .tooEasy) }
+                        .buttonStyle(LunaraSecondaryButton())
+
+                    Button("Zu hart") { store.updateFeedback(exerciseID: log.exerciseID, feedback: .tooHard) }
+                        .buttonStyle(LunaraSecondaryButton())
+                }
+
+                if !log.sets.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Sätze")
+                            .font(.caption.bold())
+                            .foregroundStyle(Color.lunaraTextSoft.opacity(0.8))
+                        ForEach(log.sets.indices, id: \.self) { s in
+                            let set = log.sets[s]
+                            Text("• \(set.weight, specifier: "%.1f") kg × \(set.reps) · RIR \(set.rir)")
+                                .foregroundStyle(.white)
+                                .font(.caption)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func startRestTimer(seconds: Int) {
+        stopRestTimer()
+        restRemaining = max(0, seconds)
+        guard restRemaining > 0 else { return }
+
+        restTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
+            if restRemaining <= 1 {
+                restRemaining = 0
+                timer.invalidate()
+            } else {
+                restRemaining -= 1
+            }
+        }
+    }
+
+    private func stopRestTimer() {
+        restTimer?.invalidate()
+        restTimer = nil
+        restRemaining = 0
+    }
+}
+
+// MARK: - Exercise Library
+
+struct LunaraExerciseLibraryView: View {
+    @EnvironmentObject private var store: LunaraStore
+    @Environment(\.dismiss) private var dismiss
+
+    var selectionMode: Bool = false
+    var onSelect: ((Exercise) -> Void)? = nil
+
+    @State private var searchText = ""
+    @State private var selectedCategory: ExerciseCategory? = nil
+    @State private var selectedMuscle: MuscleGroup? = nil
+    @State private var selectedEquipment: EquipmentType? = nil
+    @State private var showCustomExerciseSheet = false
+
+    var filteredExercises: [Exercise] {
+        store.exerciseLibrary.filter { exercise in
+            let matchesSearch = searchText.isEmpty || exercise.name.localizedCaseInsensitiveContains(searchText)
+            let matchesCategory = selectedCategory == nil || exercise.category == selectedCategory
+            let matchesMuscle = selectedMuscle == nil || exercise.primaryMuscle == selectedMuscle || exercise.secondaryMuscles.contains(selectedMuscle!)
+            let matchesEquipment = selectedEquipment == nil || exercise.equipment == selectedEquipment
+            return matchesSearch && matchesCategory && matchesMuscle && matchesEquipment
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LunaraBackground()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        searchBar
+
+                        filterSection
+
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    LunaraSectionTitle("Übungen", subtitle: "\(filteredExercises.count) gefunden")
+                                    Spacer()
+                                    if store.subscriptionService.isPremiumActive() {
+                                        Button("Custom") { showCustomExerciseSheet = true }
+                                            .buttonStyle(LunaraSecondaryButton())
+                                    }
+                                }
+
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                                    ForEach(filteredExercises) { exercise in
+                                        exerciseCard(exercise)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle(selectionMode ? "Übung wählen" : "Übungen")
+            .sheet(isPresented: $showCustomExerciseSheet) {
+                LunaraCustomExerciseSheet()
+            }
+        }
+    }
+
+    private var searchBar: some View {
+        LunaraCard {
+            VStack(alignment: .leading, spacing: 10) {
+                LunaraSectionTitle("Suche", subtitle: "Wie Lyfta, nur mit Lunara-Style")
+                TextField("Übung suchen …", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+            }
+        }
+    }
+
+    private var filterSection: some View {
+        LunaraCard {
+            VStack(alignment: .leading, spacing: 10) {
+                LunaraSectionTitle("Filter", subtitle: "Muskel, Kategorie, Equipment")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        filterChip(title: "Alle", active: selectedCategory == nil) { selectedCategory = nil }
+                        ForEach(ExerciseCategory.allCases) { cat in
+                            filterChip(title: cat.title, active: selectedCategory == cat) {
+                                selectedCategory = selectedCategory == cat ? nil : cat
+                            }
+                        }
+                    }
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        filterChip(title: "Alle Muskeln", active: selectedMuscle == nil) { selectedMuscle = nil }
+                        ForEach(MuscleGroup.allCases) { muscle in
+                            filterChip(title: muscle.title, active: selectedMuscle == muscle) {
+                                selectedMuscle = selectedMuscle == muscle ? nil : muscle
+                            }
+                        }
+                    }
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        filterChip(title: "Alle Geräte", active: selectedEquipment == nil) { selectedEquipment = nil }
+                        ForEach(EquipmentType.allCases) { equipment in
+                            filterChip(title: equipment.title, active: selectedEquipment == equipment) {
+                                selectedEquipment = selectedEquipment == equipment ? nil : equipment
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func exerciseCard(_ exercise: Exercise) -> some View {
+        let addAction = {
+            if selectionMode {
+                onSelect?(exercise)
+                dismiss()
+            } else {
+                store.addExerciseToDraft(exercise)
+            }
+        }
+
+        Button(action: addAction) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(exercise.icon)
+                    .font(.title2)
+                Text(exercise.name)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text(exercise.primaryMuscle.title)
+                    .font(.caption)
+                    .foregroundStyle(Color.lunaraTextSoft.opacity(0.75))
+                Text(exercise.equipment.title)
+                    .font(.caption2)
+                    .foregroundStyle(Color.lunaraTextSoft.opacity(0.55))
+                Spacer(minLength: 0)
+                Text(selectionMode ? "Hinzufügen" : "Zum Training")
+                    .font(.caption.bold())
+                    .foregroundStyle(Color.lunaraLavender)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 140, alignment: .leading)
+            .background(Color.white.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func filterChip(title: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ToggleChip(title: title, active: active)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct LunaraCustomExerciseSheet: View {
+    @EnvironmentObject private var store: LunaraStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name = ""
+    @State private var icon = "✨"
+    @State private var primaryMuscle: MuscleGroup = .glutes
+    @State private var category: ExerciseCategory = .compound
+    @State private var equipment: EquipmentType = .dumbbell
+    @State private var movement: MovementPattern = .hinge
+    @State private var comparableIDs: Set<String> = []
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Neue Übung") {
+                    TextField("Name", text: $name)
+                    TextField("Emoji", text: $icon)
+                    Picker("Primäre Muskelgruppe", selection: $primaryMuscle) {
+                        ForEach(MuscleGroup.allCases) { muscle in
+                            Text(muscle.title).tag(muscle)
+                        }
+                    }
+                    Picker("Kategorie", selection: $category) {
+                        ForEach(ExerciseCategory.allCases) { cat in
+                            Text(cat.title).tag(cat)
+                        }
+                    }
+                    Picker("Equipment", selection: $equipment) {
+                        ForEach(EquipmentType.allCases) { item in
+                            Text(item.title).tag(item)
+                        }
+                    }
+                    Picker("Bewegung", selection: $movement) {
+                        ForEach(MovementPattern.allCases) { item in
+                            Text(item.rawValue.capitalized).tag(item)
+                        }
+                    }
+                }
+
+                Section("Vergleichsübungen") {
+                    ForEach(store.exerciseLibrary) { exercise in
+                        Toggle(exercise.name, isOn: Binding(
+                            get: { comparableIDs.contains(exercise.id) },
+                            set: { isOn in
+                                if isOn {
+                                    comparableIDs.insert(exercise.id)
+                                } else {
+                                    comparableIDs.remove(exercise.id)
+                                }
+                            }
+                        ))
+                    }
+                }
+
+                Section {
+                    Button("💜 Speichern") {
+                        store.addCustomExercise(
+                            name: name,
+                            icon: icon.isEmpty ? "✨" : icon,
+                            primaryMuscle: primaryMuscle,
+                            category: category,
+                            equipment: equipment,
+                            movement: movement,
+                            comparableExerciseIDs: Array(comparableIDs)
+                        )
+                        dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .navigationTitle("Custom Exercise")
+        }
+    }
+}
+
+// MARK: - Template Builder
+
+struct LunaraTemplateBuilderView: View {
+    @EnvironmentObject private var store: LunaraStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showEditor = false
+    @State private var editingTemplate: TrainingTemplate? = nil
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LunaraBackground()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 10) {
+                                LunaraSectionTitle("Training Templates", subtitle: "Bindet Workouts an Wochentage")
+                                Button("Neue Vorlage") {
+                                    editingTemplate = TrainingTemplate(
+                                        name: "Neue Vorlage",
+                                        emoji: "💜",
+                                        weekdayBindings: [.monday],
+                                        plannedExercises: [],
+                                        defaultRestSeconds: 90,
+                                        isCustom: true
+                                    )
+                                    showEditor = true
+                                }
+                                .buttonStyle(LunaraPrimaryButton())
+                            }
+                        }
+
+                        ForEach(store.templates) { template in
+                            LunaraCard {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    HStack {
+                                        Text("\(template.emoji) \(template.name)")
+                                            .font(.headline)
+                                            .foregroundStyle(.white)
+                                        Spacer()
+                                        ShareLink(item: store.shareTemplateURL(template), preview: SharePreview(template.name))
+                                    }
+                                    Text("Tage: \(template.weekdayBindings.map { $0.title }.joined(separator: ", "))")
+                                        .font(.caption)
+                                        .foregroundStyle(Color.lunaraTextSoft.opacity(0.75))
+                                    Text("\(template.plannedExercises.count) Übungen · \(template.defaultRestSeconds)s Pause")
+                                        .font(.caption)
+                                        .foregroundStyle(Color.lunaraTextSoft.opacity(0.65))
+                                    HStack {
+                                        Button("Bearbeiten") {
+                                            editingTemplate = template
+                                            showEditor = true
+                                        }
+                                        .buttonStyle(LunaraSecondaryButton())
+
+                                        Button("Löschen") {
+                                            store.deleteTemplate(id: template.id)
+                                        }
+                                        .buttonStyle(LunaraSecondaryButton())
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Vorlagen")
+            .sheet(isPresented: $showEditor) {
+                if let editingTemplate {
+                    LunaraTemplateEditorView(template: editingTemplate)
+                }
+            }
+        }
+    }
+}
+
+struct LunaraTemplateEditorView: View {
+    @EnvironmentObject private var store: LunaraStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State var template: TrainingTemplate
+    @State private var showPicker = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Vorlage") {
+                    TextField("Name", text: $template.name)
+                    TextField("Emoji", text: $template.emoji)
+                    Stepper("Pausenzeit: \(template.defaultRestSeconds)s", value: $template.defaultRestSeconds, in: 30...300, step: 15)
+                }
+
+                Section("Wochentage") {
+                    HStack {
+                        ForEach(Weekday.allCases) { day in
+                            Button {
+                                if template.weekdayBindings.contains(day) {
+                                    template.weekdayBindings.removeAll(where: { $0 == day })
+                                } else {
+                                    template.weekdayBindings.append(day)
+                                }
+                            } label: {
+                                ToggleChip(title: day.title, active: template.weekdayBindings.contains(day))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                Section("Übungen") {
+                    ForEach(template.plannedExercises) { item in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("\(item.icon) \(item.exerciseName)")
+                                .font(.headline)
+                            Stepper("Sätze: \(item.targetSets)", value: binding(for: item.id, keyPath: \.targetSets), in: 1...10)
+                            Stepper("Wdh: \(item.targetReps)", value: binding(for: item.id, keyPath: \.targetReps), in: 1...20)
+                            Stepper("RIR: \(item.targetRIR)", value: binding(for: item.id, keyPath: \.targetRIR), in: 0...5)
+                            Stepper("Pause: \(item.restSeconds)s", value: binding(for: item.id, keyPath: \.restSeconds), in: 30...300, step: 15)
+                            Button("Entfernen") {
+                                template.plannedExercises.removeAll { $0.id == item.id }
+                            }
+                            .foregroundStyle(.red)
+                        }
+                    }
+
+                    Button("Übung hinzufügen") { showPicker = true }
+                }
+
+                Section {
+                    Button("💜 Speichern") {
+                        store.addTemplate(template)
+                        dismiss()
+                    }
+                    .disabled(template.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .navigationTitle("Vorlage bearbeiten")
+            .sheet(isPresented: $showPicker) {
+                LunaraExerciseLibraryView(selectionMode: true) { exercise in
+                    template.plannedExercises.append(
+                        TemplateExercise(
+                            exerciseID: exercise.id,
+                            exerciseName: exercise.name,
+                            icon: exercise.icon,
+                            targetSets: 3,
+                            targetReps: 8,
+                            targetRIR: 2,
+                            restSeconds: template.defaultRestSeconds
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private func binding<T>(for id: String, keyPath: WritableKeyPath<TemplateExercise, T>) -> Binding<T> {
+        Binding(
+            get: {
+                guard let item = template.plannedExercises.first(where: { $0.id == id }) else {
+                    fatalError("Template exercise not found")
+                }
+                return item[keyPath: keyPath]
+            },
+            set: { newValue in
+                guard let index = template.plannedExercises.firstIndex(where: { $0.id == id }) else { return }
+                template.plannedExercises[index][keyPath: keyPath] = newValue
+            }
+        )
+    }
+}
+
+// MARK: - Progress
+
+struct LunaraProgressView: View {
+    @EnvironmentObject private var store: LunaraStore
+    @State private var selectedExerciseID: String = ""
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LunaraBackground()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        let summary = store.monthlySummary()
+
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 12) {
+                                LunaraSectionTitle("Dein Fortschritt", subtitle: "Wöchentliche und monatliche Einordnung")
+                                HStack {
+                                    MetricPill(title: "Sessions", value: "\(summary.sessions)", emoji: "🏋️")
+                                    MetricPill(title: "Volumen", value: "\(Int(summary.volume))", emoji: "📈")
+                                }
+                            }
+                        }
+
+                        if selectedExerciseID.isEmpty {
+                            selectedExerciseID = store.exerciseLibrary.first?.id ?? ""
+                        }
+
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 12) {
+                                LunaraSectionTitle("Übung wählen", subtitle: "Graphen je Übung")
+                                Picker("Übung", selection: $selectedExerciseID) {
+                                    ForEach(store.exerciseLibrary) { exercise in
+                                        Text(exercise.name).tag(exercise.id)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+
+                                exerciseChart
+                            }
+                        }
+
+                        let progressText = goalProgressText()
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 10) {
+                                LunaraSectionTitle("Monatsziel", subtitle: "z. B. 10× Gym")
+                                Text(progressText)
+                                    .foregroundStyle(.white)
+                                    .font(.headline)
+                                ProgressView(value: store.monthlyProgress)
+                                    .tint(.lunaraPink)
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Fortschritt")
+        }
+    }
+
+    @ViewBuilder
+    private var exerciseChart: some View {
+        let points = store.sessionPoints(for: selectedExerciseID)
+
+        if points.isEmpty {
+            Text("Noch keine Daten für diese Übung.")
+                .foregroundStyle(Color.lunaraTextSoft.opacity(0.8))
+                .font(.subheadline)
+        } else {
+            Chart(points) { point in
+                LineMark(
+                    x: .value("Datum", point.date),
+                    y: .value("Gewicht", point.weight)
+                )
+                .foregroundStyle(Color.lunaraPrimary)
+
+                PointMark(
+                    x: .value("Datum", point.date),
+                    y: .value("Gewicht", point.weight)
+                )
+                .foregroundStyle(color(for: point.phase))
+            }
+            .frame(height: 220)
+        }
+    }
+
+    private func color(for phase: CyclePhase) -> Color {
+        switch phase {
+        case .menstruation: return .gray.opacity(0.8)
+        case .follicular: return .lunaraLavender
+        case .ovulation: return .lunaraPink
+        case .luteal: return .lunaraPrimary
+        case .unknown: return .white.opacity(0.6)
+        }
+    }
+
+    private func goalProgressText() -> String {
+        let goal = store.monthlyGoal?.targetSessionsPerMonth ?? 10
+        return "\(store.monthlySessionCount)/\(goal) Trainingseinheiten"
+    }
+}
+
+// MARK: - Calendar
+
+struct LunaraCalendarView: View {
+    @EnvironmentObject private var store: LunaraStore
+
+    private let calendar = Calendar.current
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LunaraBackground()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 12) {
+                                LunaraSectionTitle("Kalender", subtitle: "Trainingstage markiert")
+                                monthGrid
+                            }
+                        }
+
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 10) {
+                                LunaraSectionTitle("Letzte Trainings", subtitle: "Chronologie")
+                                ForEach(store.sessions.sorted(by: { $0.date > $1.date }).prefix(12)) { session in
+                                    HStack {
+                                        VStack(alignment: .leading) {
+                                            Text("\(session.title)")
+                                                .foregroundStyle(.white)
+                                                .font(.headline)
+                                            Text(session.date.formatted(date: .abbreviated, time: .omitted))
+                                                .foregroundStyle(Color.lunaraTextSoft.opacity(0.7))
+                                                .font(.caption)
+                                        }
+                                        Spacer()
+                                        Text("💜 \(session.totalSets)")
+                                            .foregroundStyle(.white)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Kalender")
+        }
+    }
+
+    private var monthGrid: some View {
+        let days = daysInCurrentMonth()
+        let trainingDates = Set(store.sessions.map { calendar.startOfDay(for: $0.date) })
+
+        return VStack(spacing: 10) {
+            let weekdays = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+            HStack {
+                ForEach(weekdays, id: \.self) { day in
+                    Text(day)
+                        .font(.caption.bold())
+                        .foregroundStyle(Color.lunaraTextSoft.opacity(0.7))
+                        .frame(maxWidth: .infinity)
+                }
+            }
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 7), spacing: 8) {
+                ForEach(days, id: \.self) { date in
+                    if let date {
+                        let hasTraining = trainingDates.contains(calendar.startOfDay(for: date))
+                        VStack(spacing: 4) {
+                            Text("\(calendar.component(.day, from: date))")
+                                .foregroundStyle(.white)
+                                .font(.subheadline.bold())
+                            Circle()
+                                .fill(hasTraining ? Color.lunaraPrimary : Color.white.opacity(0.08))
+                                .frame(width: 8, height: 8)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.05))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    } else {
+                        Color.clear
+                            .frame(height: 44)
+                    }
+                }
+            }
+        }
+    }
+
+    private func daysInCurrentMonth() -> [Date?] {
+        guard let interval = calendar.dateInterval(of: .month, for: Date()) else { return [] }
+        let firstWeekday = calendar.component(.weekday, from: interval.start)
+        let startOffset = (firstWeekday + 5) % 7
+
+        let numberOfDays = calendar.range(of: .day, in: .month, for: Date())?.count ?? 30
+        var result: [Date?] = Array(repeating: nil, count: startOffset)
+
+        for day in 0..<numberOfDays {
+            let date = calendar.date(byAdding: .day, value: day, to: interval.start)
+            result.append(date)
+        }
+        while result.count % 7 != 0 { result.append(nil) }
+        return result
+    }
+}
+
+// MARK: - Feed / social
+
+struct LunaraFeedView: View {
+    @EnvironmentObject private var store: LunaraStore
+    @State private var showInvite = false
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LunaraBackground()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 12) {
+                                LunaraSectionTitle("Teilen & Einladen", subtitle: "Freunde, Templates und Sessions teilen")
+                                HStack {
+                                    ShareLink(item: store.shareInviteURL(), preview: SharePreview("Lunara Invite")) {
+                                        Text("Freund einladen")
+                                    }
+                                    .buttonStyle(LunaraPrimaryButton())
+
+                                    Button("Abo") { showInvite = true }
+                                        .buttonStyle(LunaraSecondaryButton())
+                                }
+                            }
+                        }
+
+                        if let latestSession = store.sessions.last {
+                            LunaraCard {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack {
+                                        Text("Letztes Training teilen")
+                                            .font(.headline)
+                                            .foregroundStyle(.white)
+                                        Spacer()
+                                        ShareLink(item: store.shareSessionURL(latestSession), preview: SharePreview(latestSession.title))
+                                    }
+                                    Text("💜 \(latestSession.title) · \(latestSession.totalSets) Sätze · \(Int(latestSession.totalVolume)) kg")
+                                        .foregroundStyle(Color.lunaraTextSoft.opacity(0.8))
+                                }
+                            }
+                        }
+
+                        ForEach(store.feedPosts.sorted(by: { $0.date > $1.date })) { post in
+                            LunaraCard {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Text("\(post.authorEmoji) \(post.authorName)")
+                                            .foregroundStyle(.white)
+                                            .font(.headline)
+                                        Spacer()
+                                        Text(post.date.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption2)
+                                            .foregroundStyle(Color.lunaraTextSoft.opacity(0.6))
+                                    }
+                                    Text(post.title)
+                                        .foregroundStyle(.white)
+                                        .font(.headline)
+                                    Text(post.body)
+                                        .foregroundStyle(Color.lunaraTextSoft.opacity(0.8))
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Feed")
+            .sheet(isPresented: $showInvite) {
+                LunaraSubscriptionView()
+            }
+        }
+    }
+}
+
+// MARK: - Profile
+
+struct LunaraProfileView: View {
+    @EnvironmentObject private var store: LunaraStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var displayName: String = ""
+    @State private var bio: String = ""
+    @State private var selectedImage: PhotosPickerItem? = nil
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Profil") {
+                    HStack {
+                        Spacer()
+                        ProfileAvatarView(data: store.profile.avatarData, size: 84)
+                        Spacer()
+                    }
+
+                    PhotosPicker(selection: $selectedImage, matching: .images) {
+                        Text("Bild wählen")
+                    }
+
+                    TextField("Name", text: $displayName)
+                    TextField("Bio", text: $bio, axis: .vertical)
+                        .lineLimit(3...5)
+                }
+
+                Section {
+                    Button("💜 Speichern") {
+                        store.profile.displayName = displayName
+                        store.profile.bio = bio
+                        store.save()
+                        dismiss()
+                    }
+                }
+            }
+            .navigationTitle("Profil")
+            .task {
+                displayName = store.profile.displayName
+                bio = store.profile.bio
+            }
+            .onChange(of: selectedImage) { _, newItem in
+                guard let newItem else { return }
+                Task {
+                    if let data = try? await newItem.loadTransferable(type: Data.self) {
+                        store.profile.avatarData = data
+                        store.save()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Settings
+
+struct LunaraSettingsView: View {
+    @EnvironmentObject private var store: LunaraStore
+    @State private var showCycleInput = false
+    @State private var showSubscription = false
+    @State private var showProfile = false
+    @State private var inviteCode = ""
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LunaraBackground()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 10) {
+                                LunaraSectionTitle("Einstellungen", subtitle: "Datenschutz, AGB, Sync")
+                                Button("Profil bearbeiten") { showProfile = true }
+                                    .buttonStyle(LunaraPrimaryButton())
+                                Button("Zyklus angeben / ändern") { showCycleInput = true }
+                                    .buttonStyle(LunaraSecondaryButton())
+                                Button("Abo & Einladung") { showSubscription = true }
+                                    .buttonStyle(LunaraSecondaryButton())
+                            }
+                        }
+
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 10) {
+                                LunaraSectionTitle("Benachrichtigungen", subtitle: "Hey, Lust zu trainieren?")
+                                Button(store.notificationsEnabled ? "Benachrichtigungen deaktivieren" : "Benachrichtigungen aktivieren") {
+                                    Task {
+                                        if store.notificationsEnabled {
+                                            await store.disableNotifications()
+                                        } else {
+                                            await store.enableNotifications()
+                                        }
+                                    }
+                                }
+                                .buttonStyle(LunaraPrimaryButton())
+                            }
+                        }
+
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 10) {
+                                LunaraSectionTitle("Rechtliches", subtitle: "Platzhalter-Links für den Launch")
+                                Link("Datenschutz", destination: URL(string: "https://example.com/privacy")!)
+                                Link("AGB", destination: URL(string: "https://example.com/terms")!)
+                                Link("Impressum", destination: URL(string: "https://example.com/imprint")!)
+                            }
+                        }
+
+                        LunaraCard {
+                            VStack(alignment: .leading, spacing: 10) {
+                                LunaraSectionTitle("Cycle Sync", subtitle: "HealthKit oder manuell")
+                                Text("Quelle: \(store.cycleState.source.rawValue) · Sicherheit: \(Int(store.cycleState.confidence * 100))%")
+                                    .foregroundStyle(.white)
+                                Button("Mit HealthKit synchronisieren") {
+                                    store.syncCycleFromHealthKit()
+                                }
+                                .buttonStyle(LunaraSecondaryButton())
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Settings")
+            .sheet(isPresented: $showCycleInput) { LunaraCycleInputView() }
+            .sheet(isPresented: $showSubscription) { LunaraSubscriptionView() }
+            .sheet(isPresented: $showProfile) { LunaraProfileView() }
+        }
+    }
+}
+
+// MARK: - Subscription
+
+struct LunaraSubscriptionView: View {
+    @EnvironmentObject private var store: LunaraStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var inviteInput = ""
+    @State private var statusMessage: String = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Status") {
+                    Text("Aktuell: \(store.subscriptionService.state.status.rawValue.capitalized)")
+                    if let trialEndsAt = store.subscriptionService.state.trialEndsAt {
+                        Text("Trial bis: \(trialEndsAt.formatted(date: .abbreviated, time: .omitted))")
+                    }
+                    Text("Rabatt: \(store.subscriptionService.state.discountPercent)%")
+                }
+
+                Section("Abo") {
+                    Button("Monatlich freischalten (StoreKit)") {
+                        Task {
+                            await store.subscriptionService.loadProducts()
+                            if let product = store.subscriptionService.products.first(where: { $0.id == store.subscriptionService.monthlyProductID }) {
+                                await store.subscriptionService.purchase(product)
+                                store.save()
+                            } else {
+                                store.subscriptionService.activateManualPremiumPreview()
+                                store.save()
+                            }
+                        }
+                    }
+
+                    Button("Jährlich freischalten (StoreKit)") {
+                        Task {
+                            await store.subscriptionService.loadProducts()
+                            if let product = store.subscriptionService.products.first(where: { $0.id == store.subscriptionService.yearlyProductID }) {
+                                await store.subscriptionService.purchase(product)
+                                store.save()
+                            } else {
+                                store.subscriptionService.activateManualPremiumPreview()
+                                store.save()
+                            }
+                        }
+                    }
+
+                    Button("Restore") {
+                        Task {
+                            await store.subscriptionService.restore()
+                            store.save()
+                        }
+                    }
+                }
+
+                Section("Freunde einladen") {
+                    Text("Dein Code: \(store.subscriptionService.shareCode())")
+                    ShareLink(item: store.shareInviteURL(), preview: SharePreview("Lunara Invite")) {
+                        Text("Code teilen")
+                    }
+
+                    TextField("Invite-Code eingeben", text: $inviteInput)
+                    Button("Code einlösen") {
+                        let success = store.claimInvite(code: inviteInput)
+                        statusMessage = success ? "💜 Einladung akzeptiert" : "Code ungültig"
+                    }
+                    if !statusMessage.isEmpty {
+                        Text(statusMessage)
+                    }
+                }
+
+                Section("Hinweis") {
+                    Text("Referral-Logik ist lokal aktiv. Für echte Cross-Device-Verifizierung brauchst du später einen kleinen Backend-Service.")
+                }
+            }
+            .navigationTitle("Abo")
+        }
+    }
+}
+
+// MARK: - Cycle input
+
+struct LunaraCycleInputView: View {
+    @EnvironmentObject private var store: LunaraStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var lastPeriodStart = Date()
+    @State private var cycleLengthDays = 28
+    @State private var periodLengthDays = 5
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Zyklus manuell") {
+                    DatePicker("Start der letzten Periode", selection: $lastPeriodStart, displayedComponents: .date)
+                    Stepper("Zykluslänge: \(cycleLengthDays) Tage", value: $cycleLengthDays, in: 21...40)
+                    Stepper("Periodenlänge: \(periodLengthDays) Tage", value: $periodLengthDays, in: 2...10)
+                }
+
+                Section {
+                    Button("💜 Speichern") {
+                        store.setManualCycle(
+                            lastPeriodStart: lastPeriodStart,
+                            cycleLengthDays: cycleLengthDays,
+                            periodLengthDays: periodLengthDays
+                        )
+                        dismiss()
+                    }
+
+                    Button("Mit HealthKit synchronisieren") {
+                        store.syncCycleFromHealthKit()
+                        dismiss()
+                    }
+                }
+
+                Section("Korrekturen") {
+                    Button("Periode hat noch nicht begonnen") {
+                        store.applyCycleCorrection(.notStarted)
+                    }
+                    Button("Periode begann früher") {
+                        store.applyCycleCorrection(.startedEarlier)
+                    }
+                    Button("Periode begann später") {
+                        store.applyCycleCorrection(.startedLater)
+                    }
+                    Button("Passt so") {
+                        store.applyCycleCorrection(.confirmed)
+                    }
+                }
+            }
+            .navigationTitle("Zyklus")
+        }
+    }
+}
+
+// MARK: - Small helpers
+
+struct ProfileAvatarView: View {
+    let data: Data?
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let data, let uiImage = UIImage(data: data) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                LinearGradient(
+                    colors: [Color.lunaraPrimary, Color.lunaraPink],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .overlay(
+                    Text("💜")
+                        .font(.system(size: size * 0.38))
+                )
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 1))
+    }
+}
